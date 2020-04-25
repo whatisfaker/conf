@@ -3,6 +3,9 @@ package amqp
 import (
 	"context"
 	"fmt"
+	"sync"
+
+	"github.com/whatisfaker/zaptrace/tracing"
 
 	"github.com/opentracing/opentracing-go/ext"
 
@@ -10,9 +13,8 @@ import (
 
 	"github.com/opentracing/opentracing-go"
 
-	"github.com/whatisfaker/zaptrace/log"
-	"github.com/whatisfaker/zaptrace/tracing"
 	"github.com/streadway/amqp"
+	"github.com/whatisfaker/zaptrace/log"
 	"go.uber.org/zap"
 )
 
@@ -21,6 +23,7 @@ type rabbitMQ struct {
 	conn    *amqp.Connection
 	log     *log.Factory
 	tracing bool
+	mutex   sync.Mutex
 }
 
 //NewRabbitMQClientByAMQPURI URI refer to https://www.rabbitmq.com/uri-spec.html
@@ -86,10 +89,16 @@ func (c *rabbitMQ) Pub(ctx context.Context, exchange string, data []byte, compre
 		c.log.Trace(ctx).Error("[Pub/Sub] Publish Message Error(Dial)", zap.String("exchange", exchange), zap.String("data", string(data)), zap.Error(err))
 		return err
 	}
+	//channel加锁和释放（1 conn = 2048 channel)
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
+		c.log.Trace(ctx).Error("[Pub/Sub] Publish Message Error(Channel)", zap.String("exchange", exchange), zap.String("data", string(data)), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	defer ch.Close()
+	c.mutex.Unlock()
 	err = ch.ExchangeDeclare(exchange, "fanout", true, false, false, false, nil)
 	if err != nil {
 		c.log.Trace(ctx).Error("[Pub/Sub] Publish Message Error(ExchangeDeclare)", zap.String("exchange", exchange), zap.String("data", string(data)), zap.Error(err))
@@ -109,11 +118,15 @@ func (c *rabbitMQ) Sub(ctx context.Context, exchange string, callback func(conte
 		c.log.Trace(ctx).Error("[Pub/Sub] Subscribe Message Error(Dial)", zap.String("exchange", exchange), zap.Error(err))
 		return err
 	}
+	//channel加锁和释放（1 conn = 2048 channel)
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
 		c.log.Trace(ctx).Error("[Pub/Sub] Subscribe Message Error(Channel)", zap.String("exchange", exchange), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	c.mutex.Unlock()
 	err = ch.ExchangeDeclare(exchange, "fanout", true, false, false, false, nil)
 	if err != nil {
 		c.log.Trace(ctx).Error("[Pub/Sub] Subscribe Message Error(ExchangeDeclare)", zap.String("exchange", exchange), zap.Error(err))
@@ -161,7 +174,11 @@ func (c *rabbitMQ) Sub(ctx context.Context, exchange string, callback func(conte
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case d := <-msgs:
+		case d, ok := <-msgs:
+			if !ok {
+				c.log.Trace(ctx).Warn("[Pub/Sub] Consume msg closed")
+				return nil
+			}
 			err := func() error {
 				if c.tracing {
 					spCtx, _ := amqptracer.Extract(d.Headers)
@@ -217,11 +234,16 @@ func (c *rabbitMQ) RoutePub(ctx context.Context, exchange string, route string, 
 		c.log.Trace(ctx).Error("[RoutePub/Sub] Publish Message(Dial)", zap.String("exchange", exchange), zap.String("route", route), zap.String("data", string(data)), zap.Error(err))
 		return err
 	}
+	//channel加锁和释放（1 conn = 2048 channel)
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
-		c.log.Trace(ctx).Error("[RoutePub/Sub] Publish Message(Channel)", zap.String("exchange", exchange), zap.String("route", route), zap.String("data", string(data)), zap.Error(err))
+		c.log.Trace(ctx).Error("[RoutePub/Sub] Publish Message(Channel)", zap.String("exchange", exchange), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	defer ch.Close()
+	c.mutex.Unlock()
 	err = ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
 	if err != nil {
 		c.log.Trace(ctx).Error("[RoutePub/Sub] Publish Message(ExchangeDeclare)", zap.String("exchange", exchange), zap.String("route", route), zap.String("data", string(data)), zap.Error(err))
@@ -241,11 +263,15 @@ func (c *rabbitMQ) RouteSub(ctx context.Context, exchange string, route string, 
 		c.log.Trace(ctx).Error("[RoutePub/Sub] Subscribe Message(Dial)", zap.String("exchange", exchange), zap.String("route", route), zap.Error(err))
 		return err
 	}
+	//channel加锁和释放（1 conn = 2048 channel)
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
-		c.log.Trace(ctx).Error("[RoutePub/Sub] Subscribe Message(Channel)", zap.String("exchange", exchange), zap.String("route", route), zap.Error(err))
+		c.log.Trace(ctx).Error("[RoutePub/Sub] Subscribe Message(Channel)", zap.String("exchange", exchange), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	c.mutex.Unlock()
 	err = ch.ExchangeDeclare(exchange, "direct", true, false, false, false, nil)
 	if err != nil {
 		c.log.Trace(ctx).Error("[RoutePub/Sub] Subscribe Message(ExchangeDeclare)", zap.String("exchange", exchange), zap.String("route", route), zap.Error(err))
@@ -293,7 +319,11 @@ func (c *rabbitMQ) RouteSub(ctx context.Context, exchange string, route string, 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case d := <-msgs:
+		case d, ok := <-msgs:
+			if !ok {
+				c.log.Trace(ctx).Warn("[RoutePub/Sub] Consume msg closed")
+				return nil
+			}
 			err := func() error {
 				if c.tracing {
 					spCtx, _ := amqptracer.Extract(d.Headers)
@@ -343,11 +373,15 @@ func (c *rabbitMQ) Produce(ctx context.Context, queueName string, data []byte, c
 		c.log.Trace(ctx).Error("[Produce/Consume] Produce Message(Dial)", zap.String("queue", queueName), zap.String("data", string(data)), zap.Error(err))
 		return err
 	}
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
 		c.log.Trace(ctx).Error("[Produce/Consume] Produce Message(Channel)", zap.String("queue", queueName), zap.String("data", string(data)), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	defer ch.Close()
+	c.mutex.Unlock()
 	q, err := ch.QueueDeclare(
 		queueName, // name
 		true,      // durable
@@ -374,11 +408,15 @@ func (c *rabbitMQ) Consume(ctx context.Context, queueName string, callback func(
 		c.log.Trace(ctx).Error("[Produce/Consume] Consume Message(Dial)", zap.String("queue", queueName), zap.Error(err))
 		return err
 	}
+	//channel加锁和释放（1 conn = 2048 channel)
+	c.mutex.Lock()
 	ch, err := conn.Channel()
 	if err != nil {
 		c.log.Trace(ctx).Error("[Produce/Consume] Consume Message(Channel)", zap.String("queue", queueName), zap.Error(err))
+		c.mutex.Unlock()
 		return err
 	}
+	c.mutex.Unlock()
 	q, err := ch.QueueDeclare(
 		queueName, // name
 		true,      // durable
@@ -417,7 +455,11 @@ func (c *rabbitMQ) Consume(ctx context.Context, queueName string, callback func(
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case d := <-msgs:
+		case d, ok := <-msgs:
+			if !ok {
+				c.log.Trace(ctx).Warn("[Produce/Consume] Consume msg closed")
+				return nil
+			}
 			err := func() error {
 				if c.tracing {
 					spCtx, _ := amqptracer.Extract(d.Headers)
