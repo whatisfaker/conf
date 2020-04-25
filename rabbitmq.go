@@ -7,7 +7,7 @@ import (
 
 type RabbitMQConfig struct {
 	URI      string `yaml:"uri"`
-	Address  string `yaml:"addr"`
+	Address  string `yaml:"addr"` //127.0.0.1:5672
 	Username string `yaml:"user"`
 	Password string `yaml:"password"`
 }
