@@ -2,6 +2,7 @@ package amqp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -17,6 +18,8 @@ import (
 	"github.com/whatisfaker/zaptrace/log"
 	"go.uber.org/zap"
 )
+
+var AMQPClosedErr = errors.New("RabbitMQ Consume Closed")
 
 type rabbitMQ struct {
 	connURL string
@@ -176,8 +179,8 @@ func (c *rabbitMQ) Sub(ctx context.Context, exchange string, callback func(conte
 			return ctx.Err()
 		case d, ok := <-msgs:
 			if !ok {
-				c.log.Trace(ctx).Warn("[Pub/Sub] Consume msg closed")
-				return nil
+				c.log.Trace(ctx).Error("[Pub/Sub] Consume msg closed")
+				return AMQPClosedErr
 			}
 			err := func() error {
 				if c.tracing {
@@ -321,8 +324,8 @@ func (c *rabbitMQ) RouteSub(ctx context.Context, exchange string, route string, 
 			return ctx.Err()
 		case d, ok := <-msgs:
 			if !ok {
-				c.log.Trace(ctx).Warn("[RoutePub/Sub] Consume msg closed")
-				return nil
+				c.log.Trace(ctx).Error("[RoutePub/Sub] Consume msg closed")
+				return AMQPClosedErr
 			}
 			err := func() error {
 				if c.tracing {
@@ -457,8 +460,8 @@ func (c *rabbitMQ) Consume(ctx context.Context, queueName string, callback func(
 			return ctx.Err()
 		case d, ok := <-msgs:
 			if !ok {
-				c.log.Trace(ctx).Warn("[Produce/Consume] Consume msg closed")
-				return nil
+				c.log.Trace(ctx).Error("[Produce/Consume] Consume msg closed")
+				return AMQPClosedErr
 			}
 			err := func() error {
 				if c.tracing {
