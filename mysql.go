@@ -19,6 +19,8 @@ type MysqlConfig struct {
 	User string `yaml:"user"`
 	//Passwd 密码
 	Passwd string `yaml:"password"`
+	//Net 网络协议 tcp
+	Net string `yaml:"net"`
 	//Addr 地址 127.0.0.1:3306
 	Addr string `yaml:"addr"`
 	//Database 数据库名
@@ -72,6 +74,11 @@ func convertAppConfigToMySQLConfig(conf *MysqlConfig) *mysql.Config {
 	config.User = conf.User
 	config.Passwd = conf.Passwd
 	config.DBName = conf.Database
+	if conf.Net == "" {
+		config.Net = "tcp"
+	} else {
+		config.Net = conf.Net
+	}
 	config.Addr = conf.Addr
 	if conf.Collation == "" {
 		config.Collation = "utf8mb4_unicode_ci"
