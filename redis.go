@@ -18,6 +18,7 @@ type RedisConfig struct {
 	PoolSize     int           `yaml:"poolsize"`
 	PoolTimeout  time.Duration `yaml:"pooltimeout"`
 	Cluster      bool          `yaml:"cluster"`
+	MaxRetries   int           `yaml:"max_retries"`
 }
 
 func loadConfig(cfg *RedisConfig) (*RedisConfig, error) {
@@ -32,7 +33,7 @@ func loadConfig(cfg *RedisConfig) (*RedisConfig, error) {
 		cfg.DialTimeout = 10 * time.Second
 	}
 	if cfg.ReadTimeout == 0 {
-		cfg.ReadTimeout = 2 * time.Second
+		cfg.ReadTimeout = 3 * time.Second
 	}
 	if cfg.WriteTimeout == 0 {
 		cfg.WriteTimeout = 10 * time.Second
@@ -42,6 +43,9 @@ func loadConfig(cfg *RedisConfig) (*RedisConfig, error) {
 	}
 	if cfg.PoolTimeout == 0 {
 		cfg.PoolTimeout = 20 * time.Second
+	}
+	if cfg.MaxRetries == 0 {
+		cfg.MaxRetries = 3
 	}
 	return cfg, nil
 }
@@ -63,6 +67,7 @@ func RedisClient(config *RedisConfig) (redis.Cmdable, error) {
 			PoolTimeout:  cfg.PoolTimeout,
 			Password:     cfg.Passwd,
 			DB:           0,
+			MaxRetries:   cfg.MaxRetries,
 		}
 		client = redis.NewClient(&option)
 	} else {
@@ -74,6 +79,7 @@ func RedisClient(config *RedisConfig) (redis.Cmdable, error) {
 			PoolSize:     cfg.PoolSize,
 			PoolTimeout:  cfg.PoolTimeout,
 			Password:     cfg.Passwd,
+			MaxRetries:   cfg.MaxRetries,
 		}
 		client = redis.NewClusterClient(&option)
 	}
